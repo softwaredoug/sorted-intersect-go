@@ -77,61 +77,67 @@ func sortedIntersectGalloping(lhs []int64, rhs []int64) (lhs_indices []int, rhs_
     return lhs_indices, rhs_indices
 }
 
+func randArr(length int, maxVal int64) (arr []int64) {
+    seen := make(map[int64]bool)
+	if maxVal < int64(length) {
+		panic("Cannot create unique array where maxVal must be greater than length")
+	}
+    for i := 0; i < length; i++ {
+		for {
+			val := rand.Int63n(maxVal)
+			if _, ok := seen[val]; !ok {
+				arr = append(arr, val)
+				seen[val] = true
+				break
+			}
+		}
+		if len(arr) == length {
+			break
+		}
+    }
+	return arr
+}
+
+
 func randArrs(seed, lengthLhs, lengthRhs int, maxVal int64) (lhs []int64, rhs []int64) {
     rand.Seed(int64(seed))
-    for i := 0; i < lengthLhs; i++ {
-        lhs = append(lhs, rand.Int63n(maxVal))
-    }
-    for i := 0; i < lengthRhs; i++ {
-        rhs = append(rhs, rand.Int63n(maxVal))
-    }
+	lhs = randArr(lengthLhs, maxVal)
+	rhs = randArr(lengthRhs, maxVal)
     slices.Sort(lhs)
     slices.Sort(rhs)
     return lhs, rhs
 }
 
 
+func randArrWithHeader(seed, length int) (arr []int64) {
+	header := 0
+	value := 0
+	for i := 0; i < length; i++ {
+		incrHeader := rand.Intn(2) == 0
+		if incrHeader {
+			header += rand.Intn(10) + 1
+			value = 0
+		}
+		app_val := int64(header << 32 | value)
+		arr = append(arr, app_val)
+		value++
+		for j:=0; j < 10; j++ {
+			keepGoing := rand.Intn(2) > 2
+			if keepGoing {
+				value += int(rand.Int63n(10)) + 1
+			} else {
+				break
+			}
+		}
+	}
+	return arr
+}
+
+
 func randArrsWithHeaders(seed, lengthLhs, lengthRhs int) (lhs []int64, rhs []int64) {
     rand.Seed(int64(seed))
-    header := 0
-    value := 0
-    for i := 0; i < lengthLhs; i++ {
-        incrHeader := rand.Intn(2) == 0
-        if incrHeader {
-            header += rand.Intn(10) + 1
-            value = 0
-        }
-        lhs = append(lhs, int64(header << 32 | value))
-        value++
-        for j:=0; j < 10; j++ {
-            keepGoing := rand.Intn(2) > 2
-            if keepGoing {
-                value += int(rand.Int63n(10))
-            } else {
-                break
-            }
-        }
-    }
-    // start in the middle
-    maxLhs := int(lhs[len(lhs)-1] >> 32)
-    header = maxLhs / 2
-    value = 0
-    for i := 0; i < lengthRhs; i++ {
-        incrHeader := rand.Intn(10) == 0
-        if incrHeader {
-            header += rand.Intn(10) + 1
-            value = 0
-        }
-        rhs = append(rhs, int64(header << 32 | value))
-        for j:=0; j < 10; j++ {
-            keepGoing := rand.Intn(2) == 0
-            if keepGoing {
-                value++
-            } else {
-                break
-            }
-        }
-    }
+	lhs = randArrWithHeader(seed, lengthLhs)
+	rhs = randArrWithHeader(seed, lengthRhs)
     return lhs, rhs
 }
 
@@ -197,7 +203,7 @@ func intersectWithHeaderMarks(lhs []int64, rhs []int64, lhsHeaders []int64, rhsH
 }
 
 
-func intersectGallopWithHeaderMarks(lhs []int64, rhs []int64, lhsHeaders []int64, rhsHeaders []int64) (lhs_indices []int, rhs_indices []int) {
+func intersectGallopToNaiveWithHeaderMarks(lhs []int64, rhs []int64, lhsHeaders []int64, rhsHeaders []int64) (lhs_indices []int, rhs_indices []int) {
 
     lhsHeaderIdx := 0
     rhsHeaderIdx := 0
@@ -261,6 +267,86 @@ func intersectGallopWithHeaderMarks(lhs []int64, rhs []int64, lhsHeaders []int64
 }
 
 
+func intersectGallopToGallopWithHeaderMarks(lhs []int64, rhs []int64, lhsHeaders []int64, rhsHeaders []int64) (lhs_indices []int, rhs_indices []int) {
+
+    lhsHeaderIdx := 0
+    rhsHeaderIdx := 0
+    gallop := 1
+
+    for lhsHeaderIdx < len(lhsHeaders) && rhsHeaderIdx < len(rhsHeaders) {
+        // Advance LHS past rhs
+        for lhsHeaderIdx < len(lhsHeaders) && lhsHeaders[lhsHeaderIdx] < rhsHeaders[rhsHeaderIdx] {
+            lhsHeaderIdx += gallop
+            gallop <<= 1
+        }
+        lhsHeaderIdx -= gallop >> 1
+        gallop = 1
+        // Advance RHS past lhs
+        for rhsHeaderIdx < len(rhsHeaders) && rhsHeaders[rhsHeaderIdx] < lhsHeaders[lhsHeaderIdx] {
+            rhsHeaderIdx += gallop
+            gallop <<= 1
+        }
+        rhsHeaderIdx -= gallop >> 1
+        gallop = 1
+
+        // two pointer check
+        if (lhsHeaders[lhsHeaderIdx] >> 32) < (rhsHeaders[rhsHeaderIdx] >> 32) {
+            lhsHeaderIdx++
+        } else if (lhsHeaders[lhsHeaderIdx] >> 32) > (rhsHeaders[rhsHeaderIdx] >> 32) {
+            rhsHeaderIdx++
+        } else {
+            // get the index into lhs / rhs
+            lhsSliceStart := int(lhsHeaders[lhsHeaderIdx] & 0xFFFFFFFF)
+            rhsSliceStart := int(rhsHeaders[rhsHeaderIdx] & 0xFFFFFFFF)
+            lhsSliceNext := len(lhs)
+            rhsSliceNext := len(rhs)
+            if lhsHeaderIdx + 1 < len(lhsHeaders) {
+                lhsSliceNext = int(lhsHeaders[lhsHeaderIdx+1] & 0xFFFFFFFF)
+            } 
+            if rhsHeaderIdx + 1 < len(rhsHeaders) {
+                rhsSliceNext = int(rhsHeaders[rhsHeaderIdx+1] & 0xFFFFFFFF)
+            }
+
+            lhsSlice := lhs[lhsSliceStart:lhsSliceNext]
+            rhsSlice := rhs[rhsSliceStart:rhsSliceNext]
+
+			// gallop intersect in this slice
+            i, j := 0, 0
+			gallop = 1
+            for i < len(lhsSlice) && j < len(rhsSlice) {
+				for i < len(lhsSlice) && (lhsSlice[i] < rhsSlice[j]) {
+                    i += gallop
+					gallop <<= 1
+				}
+				i -= gallop >> 1
+				gallop = 1
+				for j < len(rhsSlice) && rhsSlice[j] < lhsSlice[i] {
+					j += gallop
+					gallop <<= 1
+				}
+				j -= gallop >> 1
+				gallop = 1
+
+				// two pointer check
+				if lhsSlice[i] < rhsSlice[j] {
+					i++
+				} else if lhsSlice[i] > rhsSlice[j] {
+					j++
+				} else {
+					lhs_indices = append(lhs_indices, i + lhsSliceStart)
+					rhs_indices = append(rhs_indices, j + rhsSliceStart)
+					i++
+					j++
+				}
+            }
+            rhsHeaderIdx++
+            lhsHeaderIdx++
+        }
+    }
+    return lhs_indices, rhs_indices
+}
+
+
 func makeHeaderIntesectFn(
     lhs []int64, rhs []int64, lhsHeaders []int64, rhsHeaders []int64,
 ) intersectFunc {
@@ -270,13 +356,23 @@ func makeHeaderIntesectFn(
 }
 
 
-func makeHeaderIntesectGallopFn(
+func makeHeaderIntesectGallopToNaiveFn(
     lhs []int64, rhs []int64, lhsHeaders []int64, rhsHeaders []int64,
 ) intersectFunc {
     return func(lhs []int64, rhs []int64) ([]int, []int) {
-        return intersectGallopWithHeaderMarks(lhs, rhs, lhsHeaders, rhsHeaders)
+        return intersectGallopToNaiveWithHeaderMarks(lhs, rhs, lhsHeaders, rhsHeaders)
     }
 }
+
+
+func makeHeaderIntesectGallopToGallopFn(
+	lhs []int64, rhs []int64, lhsHeaders []int64, rhsHeaders []int64,
+) intersectFunc {
+	return func(lhs []int64, rhs []int64) ([]int, []int) {
+		return intersectGallopToGallopWithHeaderMarks(lhs, rhs, lhsHeaders, rhsHeaders)
+	}
+}
+
 
 
 type intersectFunc func(lhs []int64, rhs []int64) ([]int, []int)
@@ -337,6 +433,7 @@ func isArrUnique(arr []int64) bool {
     seen := make(map[int64]bool)
     for _, val := range arr {
         if _, ok := seen[val]; ok {
+			fmt.Printf("Duplicate value: %d\n", val)
             return false
         }
         seen[val] = true
@@ -366,22 +463,24 @@ func profileAll(lhs, rhs []int64) {
         panic("rhs not sorted")
     }
     if !isArrUnique(lhs) {
-        fmt.Println("Warning: lhs not unique")
+        panic("Warning: lhs not unique")
     }
     if !isArrUnique(rhs) {
-        fmt.Println("Warning: rhs not unique")
+        panic("Warning: rhs not unique")
     }
     lhsHeaders := headerIndices(lhs)
     rhsHeaders := headerIndices(rhs)
     fmt.Printf("LHS Header len: %d / %d\n", len(lhsHeaders), len(lhs))
     fmt.Printf("RHS Header len: %d / %d\n", len(rhsHeaders), len(rhs))
     headerIntersectFn := makeHeaderIntesectFn(lhs, rhs, lhsHeaders, rhsHeaders)
-    headerIntersectGallopFn := makeHeaderIntesectGallopFn(lhs, rhs, lhsHeaders, rhsHeaders)
+    headerIntersectGallopToNaiveFn := makeHeaderIntesectGallopToNaiveFn(lhs, rhs, lhsHeaders, rhsHeaders)
+    headerIntersectGallopToGallopFn := makeHeaderIntesectGallopToGallopFn(lhs, rhs, lhsHeaders, rhsHeaders)
 
     lhsResult, rhsResult := profileCall(sortedIntersectNaive, lhs, rhs, 1, nil, nil)
     profileCall(sortedIntersectGalloping, lhs, rhs, 1, lhsResult, rhsResult)
     profileCall(headerIntersectFn, lhs, rhs, 1, lhsResult, rhsResult)
-    profileCall(headerIntersectGallopFn, lhs, rhs, 1, lhsResult, rhsResult)
+    profileCall(headerIntersectGallopToNaiveFn, lhs, rhs, 1, lhsResult, rhsResult)
+    profileCall(headerIntersectGallopToGallopFn, lhs, rhs, 1, lhsResult, rhsResult)
 }
 
 
@@ -389,16 +488,11 @@ func profileAll(lhs, rhs []int64) {
 
 
 func main() {
-    for i := 0; i < 1000; i++ {
-        fmt.Println("******************")
-        fmt.Printf("Even -- data -- seed: %d\n", i)
-        lhs, rhs := randArrsWithHeaders(i, 100, 100)
-        profileAll(lhs, rhs)
-    }
-
-    fmt.Println("******************")
+    maxVal := int64(100000000)
+    
+	fmt.Println("******************")
     fmt.Println("Even -- data with headers")
-    lhs, rhs := randArrsWithHeaders(42, 1000000, 1000000)
+	lhs, rhs := randArrsWithHeaders(42, 1000000, 1000000)
     profileAll(lhs, rhs)
     
     fmt.Println("******************")
@@ -414,7 +508,6 @@ func main() {
 
     fmt.Println("******************")
     fmt.Println("Lobsided -- truly random")
-    maxVal := int64(10000)
     lhs, rhs = randArrs(42, 100, 1000000, maxVal)
     profileAll(lhs, rhs)
     
