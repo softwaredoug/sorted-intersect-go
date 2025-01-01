@@ -2,7 +2,6 @@ package main
 
 import (
     "math/rand"
-    "time"
     "fmt"
     "slices"
 
@@ -12,15 +11,8 @@ import (
 
 	"github.com/softwaredoug/sorted-intersect-go/algos"
 	"github.com/softwaredoug/sorted-intersect-go/sortedGen"
+	"github.com/softwaredoug/sorted-intersect-go/perfTimer"
 )
-
-
-func timer(name string) func() {
-    start := time.Now()
-    return func() {
-        fmt.Printf("%s took %v\n", name, time.Since(start))
-    }
-}
 
 
 func randArrs(seed, lengthLhs, lengthRhs int, maxVal int64) (lhs []int64, rhs []int64) {
@@ -71,19 +63,21 @@ func diffArrays(expected, actual []int, self []int64, other []int64) {
 }
 
 
-func profileUnchecked(f algos.IntersectFunc, lhs []int64, rhs []int64, times int) (lhs_indices []int, rhs_indices []int) {
+func profileUnchecked(f algos.IntersectFunc, timerLog *perfTimer.TimerLog,
+					  lhs []int64, rhs []int64, times int) (lhs_indices []int, rhs_indices []int) {
 	funcName := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-	defer timer(funcName)()
+	defer timerLog.Timer(funcName)()
 	for i := 0; i < times; i++ {
 		lhs_indices, rhs_indices = f(lhs, rhs)
 	}
 	return lhs_indices, rhs_indices
 }
 
-func profileCall(f algos.IntersectFunc, lhs []int64, rhs []int64, times int,
+func profileCall(f algos.IntersectFunc, timerLog *perfTimer.TimerLog,
+				 lhs []int64, rhs []int64, times int,
                  lhs_check, rhs_check []int) (lhs_indices []int, rhs_indices []int) {
 	funcName := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-	lhs_indices, rhs_indices = profileUnchecked(f, lhs, rhs, times)
+	lhs_indices, rhs_indices = profileUnchecked(f, timerLog, lhs, rhs, times)
     if lhs_check != nil && rhs_check != nil {
         if !slices.Equal(lhs_check, lhs_indices) {
             msg := fmt.Sprintf("lhs check failed: %s", funcName)
@@ -129,7 +123,7 @@ func isArrSorted(arr []int64) bool {
 }
 
 
-func profileAll(lhs, rhs []int64) {
+func profileAll(title string, lhs, rhs []int64) {
     if !isArrSorted(lhs) {
         panic("lhs not sorted")
     }
@@ -144,17 +138,23 @@ func profileAll(lhs, rhs []int64) {
     }
     lhsHeaders := algos.HeaderIndices(lhs)
     rhsHeaders := algos.HeaderIndices(rhs)
-    fmt.Printf("LHS Header len: %d / %d\n", len(lhsHeaders), len(lhs))
-    fmt.Printf("RHS Header len: %d / %d\n", len(rhsHeaders), len(rhs))
+	description := ""
+    description += fmt.Sprintf("LHS Header len: %d / %d\n", len(lhsHeaders), len(lhs))
+    description += fmt.Sprintf("RHS Header len: %d / %d\n", len(rhsHeaders), len(rhs))
     headerIntersectFn := algos.MakeHeaderIntesectFn(lhs, rhs, lhsHeaders, rhsHeaders)
     headerIntersectGallopToNaiveFn := algos.MakeHeaderIntesectGallopToNaiveFn(lhs, rhs, lhsHeaders, rhsHeaders)
     headerIntersectGallopToGallopFn := algos.MakeHeaderIntesectGallopToGallopFn(lhs, rhs, lhsHeaders, rhsHeaders)
 
-    lhsResult, rhsResult := profileCall(algos.SortedIntersectNaive, lhs, rhs, 1, nil, nil)
-    profileCall(algos.SortedIntersectGalloping, lhs, rhs, 1, lhsResult, rhsResult)
-    profileCall(headerIntersectFn, lhs, rhs, 1, lhsResult, rhsResult)
-    profileCall(headerIntersectGallopToNaiveFn, lhs, rhs, 1, lhsResult, rhsResult)
-    profileCall(headerIntersectGallopToGallopFn, lhs, rhs, 1, lhsResult, rhsResult)
+	timerLog := perfTimer.NewTimerLog(title, description)
+
+    lhsResult, rhsResult := profileCall(algos.SortedIntersectNaive, timerLog, lhs, rhs, 1, nil, nil)
+    profileCall(algos.SortedIntersectGalloping, timerLog, lhs, rhs, 1, lhsResult, rhsResult)
+    profileCall(headerIntersectFn, timerLog, lhs, rhs, 1, lhsResult, rhsResult)
+    profileCall(headerIntersectGallopToNaiveFn, timerLog, lhs, rhs, 1, lhsResult, rhsResult)
+    profileCall(headerIntersectGallopToGallopFn, timerLog, lhs, rhs, 1, lhsResult, rhsResult)
+
+	timerLog.GraphTimings(40)
+	fmt.Println()
 }
 
 
@@ -164,32 +164,24 @@ func profileAll(lhs, rhs []int64) {
 func main() {
     maxVal := int64(100000000)
     
-	fmt.Println("******************")
-    fmt.Println("Even -- data with headers")
+	title := "Even -- data with headers"
 	lhs, rhs := randArrsWithHeaders(42, 1000000, 1000000)
-    profileAll(lhs, rhs)
+    profileAll(title, lhs, rhs)
     
-    fmt.Println("******************")
-    fmt.Println("Lobsided -- lhs largest - data with headers")
+	title = "Lobsided -- lhs largest - data with headers"
     lhs, rhs = randArrsWithHeaders(42, 100000000, 100)
-    profileAll(lhs, rhs)
+    profileAll(title, lhs, rhs)
     
-
-    fmt.Println("******************")
-    fmt.Println("Lobsided -- rhs largest - data with headers")
+    title = "Lobsided -- rhs largest - data with headers"
     lhs, rhs = randArrsWithHeaders(42, 100, 100000000)
-    profileAll(lhs, rhs)
-
-    fmt.Println("******************")
-    fmt.Println("******************")
-    fmt.Println("******************")
-    fmt.Println("Lobsided -- truly random")
-    lhs, rhs = randArrs(42, 100, 1000000, maxVal)
-    profileAll(lhs, rhs)
+    profileAll(title, lhs, rhs)
     
-    fmt.Println("******************")
-    fmt.Println("Even -- truly random")
+	title = "Lobsided -- truly random"
+    lhs, rhs = randArrs(42, 100, 1000000, maxVal)
+    profileAll(title, lhs, rhs)
+    
+    title = "Even -- truly random"
     lhs, rhs = randArrs(42, 100000, 1000000, maxVal)
-    profileAll(lhs, rhs)
+    profileAll(title, lhs, rhs)
    
 }
